@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 use std::env;
 use std::fs;
 use std::fs::File;
@@ -167,6 +166,18 @@ impl Item {
         output += "</entry>\n";
         output
     }
+
+    fn updated(&self) -> Option<OffsetDateTime> {
+        if let Some(date_modified) = &self.date_modified {
+            return parse_dt(date_modified).ok();
+        }
+
+        if let Some(date_published) = &self.date_published {
+            return parse_dt(date_published).ok();
+        };
+
+        None
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -221,7 +232,7 @@ impl Feed {
         }
     }
 
-    fn to_atom(&self) -> (String, OffsetDateTime) {
+    fn to_atom(&self) -> String {
         let mut output = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n".to_string();
 
         if let Some(language) = &self.language {
@@ -269,22 +280,11 @@ impl Feed {
             output += &format!("<logo>{}</logo>\n", icon);
         }
 
-        let mut updated = "2000-01-01T00:00:00Z".to_string();
-        if let Some(items) = &self.items {
-            for item in items {
-                if let Some(item_updated) = &item.date_modified {
-                    if updated.cmp(item_updated) == Ordering::Less {
-                        updated = item_updated.to_string();
-                    }
-                } else if let Some(item_published) = &item.date_published {
-                    if updated.cmp(item_published) == Ordering::Less {
-                        updated = item_published.to_string();
-                    }
-                }
-            }
+        if let Some(updated) = self.updated() {
+            output += &format!("<updated>{}</updated>\n", updated);
+        } else {
+            output += &format!("<updated>{}</updated>\n", now());
         }
-
-        output += &format!("<updated>{}</updated>\n", updated);
 
         if let Some(items) = &self.items {
             for item in items {
@@ -293,8 +293,27 @@ impl Feed {
         }
 
         output += "</feed>";
-        let updated_time = parse_dt(&updated).unwrap();
-        (output, updated_time)
+        output
+    }
+
+    fn updated(&self) -> Option<OffsetDateTime> {
+        let mut updated = None;
+
+        if let Some(items) = &self.items {
+            for item in items {
+                if let Some(item_updated) = item.updated() {
+                    if let Some(u) = updated {
+                        if item_updated > u {
+                            updated = Some(item_updated);
+                        }
+                    } else {
+                        updated = Some(item_updated);
+                    }
+                }
+            }
+        }
+
+        updated
     }
 }
 
@@ -358,7 +377,13 @@ fn main() {
     };
 
     if let Ok(feed) = Feed::parse(&data) {
-        let (feed_atom, updated) = feed.to_atom();
+        let feed_atom = feed.to_atom();
+
+        let updated = if let Some(updated) = feed.updated() {
+            updated
+        } else {
+            OffsetDateTime::now_utc()
+        };
 
         if let Some(output) = output {
             let write_file = if let Some(mtime) = get_mtime(&output) {
