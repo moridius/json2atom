@@ -7,6 +7,7 @@ use std::io;
 use std::io::BufRead;
 use std::io::Write;
 use std::process;
+use time::error;
 use time::format_description::well_known;
 use time::{OffsetDateTime, UtcOffset};
 
@@ -30,6 +31,10 @@ fn get_mtime(file: &str) -> Option<OffsetDateTime> {
     }
 
     None
+}
+
+fn parse_dt(input: &str) -> Result<OffsetDateTime, error::Parse> {
+    OffsetDateTime::parse(input, &well_known::Rfc3339)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -267,7 +272,7 @@ impl Feed {
         }
 
         output += "</feed>";
-        let updated_time = OffsetDateTime::parse(&updated, &well_known::Rfc3339).unwrap();
+        let updated_time = parse_dt(&updated).unwrap();
         (output, updated_time)
     }
 }
