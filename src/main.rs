@@ -37,7 +37,7 @@ fn parse_dt(input: &str) -> Result<OffsetDateTime, error::Parse> {
     OffsetDateTime::parse(input, &well_known::Rfc3339)
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct Author {
     name: Option<String>,
     url: Option<String>,
@@ -45,14 +45,18 @@ struct Author {
 }
 
 impl Author {
-    fn into_atom(self) -> String {
+    fn to_atom(&self) -> String {
         let mut output = "<author>\n<name>".to_string();
-        output += &self.name.unwrap_or_default();
+        if let Some(name) = &self.name {
+            output += &name;
+        }
         output += "</name>\n";
-        if let Some(url) = self.url {
+
+        if let Some(url) = &self.url {
             output += &format!("<uri>{}</uri>\n", url);
         }
         output += "</author>\n";
+
         output
     }
 }
@@ -84,7 +88,17 @@ struct Item {
 }
 
 impl Item {
-    fn into_atom(mut self) -> String {
+    fn cleanup_authors(&mut self) {
+        if self.author.is_some() {
+            if self.authors.is_none() {
+                self.authors = Some(vec![self.author.as_ref().unwrap().clone()]);
+            }
+
+            self.author = None;
+        }
+    }
+
+    fn to_atom(&self) -> String {
         let mut output = "".to_string();
 
         if let Some(language) = &self.language {
@@ -129,21 +143,13 @@ impl Item {
             output += &format!("<published>{}</published>\n", &date_published);
         }
 
-        if self.author.is_some() {
-            if self.authors.is_none() {
-                self.authors = Some(vec![self.author.unwrap()]);
-            }
-
-            self.author = None;
-        }
-
-        if let Some(authors) = self.authors {
+        if let Some(authors) = &self.authors {
             for author in authors {
-                output += &author.into_atom();
+                output += &author.to_atom();
             }
         }
 
-        if let Some(attachments) = self.attachments {
+        if let Some(attachments) = &self.attachments {
             for attachment in attachments {
                 output += &format!(
                     "<link rel=\"enclosure\" href=\"{}\"/ type=\"{}\"",
@@ -192,7 +198,30 @@ struct Feed {
 }
 
 impl Feed {
-    fn into_atom(mut self) -> (String, OffsetDateTime) {
+    fn parse(data: &str) -> Result<Self, serde_json::Error> {
+        let mut feed = serde_json::from_str::<Feed>(data)?;
+        feed.cleanup_authors();
+
+        if let Some(ref mut items) = feed.items {
+            for item in items.iter_mut() {
+                item.cleanup_authors();
+            }
+        }
+
+        Ok(feed)
+    }
+
+    fn cleanup_authors(&mut self) {
+        if self.author.is_some() {
+            if self.authors.is_none() {
+                self.authors = Some(vec![self.author.as_ref().unwrap().clone()]);
+            }
+
+            self.author = None;
+        }
+    }
+
+    fn to_atom(&self) -> (String, OffsetDateTime) {
         let mut output = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n".to_string();
 
         if let Some(language) = &self.language {
@@ -204,18 +233,10 @@ impl Feed {
             output += "<feed xmlns=\"http://www.w3.org/2005/Atom\">\n";
         };
 
-        if self.author.is_some() {
-            if self.authors.is_none() {
-                self.authors = Some(vec![self.author.unwrap()]);
-            }
-
-            self.author = None;
-        }
-
         let mut author_exists = false;
-        if let Some(authors) = self.authors {
+        if let Some(authors) = &self.authors {
             for author in authors {
-                output += &author.into_atom();
+                output += &author.to_atom();
                 author_exists = true;
             }
         }
@@ -265,9 +286,9 @@ impl Feed {
 
         output += &format!("<updated>{}</updated>\n", updated);
 
-        if let Some(items) = self.items {
+        if let Some(items) = &self.items {
             for item in items {
-                output += &item.into_atom();
+                output += &item.to_atom();
             }
         }
 
@@ -336,21 +357,25 @@ fn main() {
         stdin_data
     };
 
-    let feed: Feed = serde_json::from_str(&data).unwrap();
-    let (feed_atom, updated) = feed.into_atom();
+    if let Ok(feed) = Feed::parse(&data) {
+        let (feed_atom, updated) = feed.to_atom();
 
-    if let Some(output) = output {
-        let write_file = if let Some(mtime) = get_mtime(&output) {
-            updated > mtime
+        if let Some(output) = output {
+            let write_file = if let Some(mtime) = get_mtime(&output) {
+                updated > mtime
+            } else {
+                true
+            };
+
+            if write_file {
+                let mut output = File::create(output).unwrap();
+                writeln!(output, "{}", feed_atom).unwrap();
+            }
         } else {
-            true
-        };
-
-        if write_file {
-            let mut output = File::create(output).unwrap();
-            writeln!(output, "{}", feed_atom).unwrap();
+            println!("{}", feed_atom);
         }
     } else {
-        println!("{}", feed_atom);
+        eprintln!("Cannot parse feed.");
+        process::exit(1);
     }
 }
