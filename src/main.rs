@@ -8,7 +8,7 @@ use std::io::BufRead;
 use std::io::Write;
 use std::process;
 use time::format_description::well_known;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROGRAM: &str = env!("CARGO_PKG_NAME");
@@ -16,6 +16,20 @@ const PROGRAM: &str = env!("CARGO_PKG_NAME");
 fn now() -> String {
     let current_time = OffsetDateTime::now_utc();
     current_time.format(&well_known::Rfc3339).unwrap()
+}
+
+fn get_mtime(file: &str) -> Option<OffsetDateTime> {
+    if let Ok(metadata) = fs::metadata(file) {
+        if let Ok(modified) = metadata.modified() {
+            let mut odt: OffsetDateTime = modified.into();
+            if let Ok(offset) = UtcOffset::local_offset_at(odt) {
+                odt = odt.to_offset(offset);
+                return Some(odt);
+            }
+        }
+    }
+
+    None
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -26,7 +40,7 @@ struct Author {
 }
 
 impl Author {
-    fn into_output(self) -> String {
+    fn into_atom(self) -> String {
         let mut output = "<author>\n<name>".to_string();
         output += &self.name.unwrap_or_default();
         output += "</name>\n";
@@ -65,7 +79,7 @@ struct Item {
 }
 
 impl Item {
-    fn into_output(mut self) -> String {
+    fn into_atom(mut self) -> String {
         let mut output = "".to_string();
 
         if let Some(language) = &self.language {
@@ -120,7 +134,7 @@ impl Item {
 
         if let Some(authors) = self.authors {
             for author in authors {
-                output += &author.into_output();
+                output += &author.into_atom();
             }
         }
 
@@ -173,7 +187,7 @@ struct Feed {
 }
 
 impl Feed {
-    fn into_output(mut self) -> String {
+    fn into_atom(mut self) -> (String, OffsetDateTime) {
         let mut output = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n".to_string();
 
         if let Some(language) = &self.language {
@@ -196,7 +210,7 @@ impl Feed {
         let mut author_exists = false;
         if let Some(authors) = self.authors {
             for author in authors {
-                output += &author.into_output();
+                output += &author.into_atom();
                 author_exists = true;
             }
         }
@@ -248,12 +262,13 @@ impl Feed {
 
         if let Some(items) = self.items {
             for item in items {
-                output += &item.into_output();
+                output += &item.into_atom();
             }
         }
 
         output += "</feed>";
-        output
+        let updated_time = OffsetDateTime::parse(&updated, &well_known::Rfc3339).unwrap();
+        (output, updated_time)
     }
 }
 
@@ -270,7 +285,11 @@ fn main() {
             help += "Learn about JSON Feed: https://jsonfeed.org/\n\n";
             help += &format!("Usage:\n    {} [[input] output]\n\n", PROGRAM);
             help += "input is a path to a JSON Feed file.\n";
-            help += "output is a path to an Atom file (use - to write to stdout).";
+            help += "output is a path to an Atom file (use - to write to stdout).\n\n";
+            help += "-h, --help     show this help and exit\n";
+            help += "    --version  show version information and exit\n";
+            help +=
+                "-f, --force    rewrite file even if modification time is newer than the feed\n";
             println!("{}", help);
             process::exit(0);
         } else if args[1] == "--version" {
@@ -313,12 +332,19 @@ fn main() {
     };
 
     let feed: Feed = serde_json::from_str(&data).unwrap();
-    let feed_atom = feed.into_output();
+    let (feed_atom, updated) = feed.into_atom();
 
     if let Some(output) = output {
-        // TODO: Check whether there is new content (otherwise don't write file)
-        let mut output = File::create(output).unwrap();
-        writeln!(output, "{}", feed_atom).unwrap();
+        let write_file = if let Some(mtime) = get_mtime(&output) {
+            updated > mtime
+        } else {
+            true
+        };
+
+        if write_file {
+            let mut output = File::create(output).unwrap();
+            writeln!(output, "{}", feed_atom).unwrap();
+        }
     } else {
         println!("{}", feed_atom);
     }
