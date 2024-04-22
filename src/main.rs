@@ -6,7 +6,6 @@ use std::io;
 use std::io::BufRead;
 use std::io::Write;
 use std::process;
-use time::error;
 use time::format_description::well_known;
 use time::{OffsetDateTime, UtcOffset};
 
@@ -32,8 +31,19 @@ fn get_mtime(file: &str) -> Option<OffsetDateTime> {
     None
 }
 
-fn parse_dt(input: &str) -> Result<OffsetDateTime, error::Parse> {
-    OffsetDateTime::parse(input, &well_known::Rfc3339)
+trait FeedElement {
+    fn updated(&self) -> Option<OffsetDateTime>;
+    fn cleanup_authors(&mut self);
+
+    fn cleanup_authors_impl(author: &mut Option<Author>, authors: &mut Option<Vec<Author>>) {
+        if author.is_some() {
+            if authors.is_none() {
+                *authors = Some(vec![author.as_ref().unwrap().clone()]);
+            }
+
+            *author = None;
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -86,17 +96,25 @@ struct Item {
     attachments: Option<Vec<Attachment>>,
 }
 
-impl Item {
-    fn cleanup_authors(&mut self) {
-        if self.author.is_some() {
-            if self.authors.is_none() {
-                self.authors = Some(vec![self.author.as_ref().unwrap().clone()]);
-            }
-
-            self.author = None;
+impl FeedElement for Item {
+    fn updated(&self) -> Option<OffsetDateTime> {
+        if let Some(date_modified) = &self.date_modified {
+            return OffsetDateTime::parse(date_modified, &well_known::Rfc3339).ok();
         }
+
+        if let Some(date_published) = &self.date_published {
+            return OffsetDateTime::parse(date_published, &well_known::Rfc3339).ok();
+        };
+
+        None
     }
 
+    fn cleanup_authors(&mut self) {
+        <Self as FeedElement>::cleanup_authors_impl(&mut self.author, &mut self.authors);
+    }
+}
+
+impl Item {
     fn to_atom(&self) -> String {
         let mut output = "".to_string();
 
@@ -166,18 +184,6 @@ impl Item {
         output += "</entry>\n";
         output
     }
-
-    fn updated(&self) -> Option<OffsetDateTime> {
-        if let Some(date_modified) = &self.date_modified {
-            return parse_dt(date_modified).ok();
-        }
-
-        if let Some(date_published) = &self.date_published {
-            return parse_dt(date_published).ok();
-        };
-
-        None
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -208,6 +214,32 @@ struct Feed {
     items: Option<Vec<Item>>,
 }
 
+impl FeedElement for Feed {
+    fn updated(&self) -> Option<OffsetDateTime> {
+        let mut updated = None;
+
+        if let Some(items) = &self.items {
+            for item in items {
+                if let Some(item_updated) = item.updated() {
+                    if let Some(u) = updated {
+                        if item_updated > u {
+                            updated = Some(item_updated);
+                        }
+                    } else {
+                        updated = Some(item_updated);
+                    }
+                }
+            }
+        }
+
+        updated
+    }
+
+    fn cleanup_authors(&mut self) {
+        <Self as FeedElement>::cleanup_authors_impl(&mut self.author, &mut self.authors);
+    }
+}
+
 impl Feed {
     fn parse(data: &str) -> Result<Self, serde_json::Error> {
         let mut feed = serde_json::from_str::<Feed>(data)?;
@@ -220,16 +252,6 @@ impl Feed {
         }
 
         Ok(feed)
-    }
-
-    fn cleanup_authors(&mut self) {
-        if self.author.is_some() {
-            if self.authors.is_none() {
-                self.authors = Some(vec![self.author.as_ref().unwrap().clone()]);
-            }
-
-            self.author = None;
-        }
     }
 
     fn to_atom(&self) -> String {
@@ -294,26 +316,6 @@ impl Feed {
 
         output += "</feed>";
         output
-    }
-
-    fn updated(&self) -> Option<OffsetDateTime> {
-        let mut updated = None;
-
-        if let Some(items) = &self.items {
-            for item in items {
-                if let Some(item_updated) = item.updated() {
-                    if let Some(u) = updated {
-                        if item_updated > u {
-                            updated = Some(item_updated);
-                        }
-                    } else {
-                        updated = Some(item_updated);
-                    }
-                }
-            }
-        }
-
-        updated
     }
 }
 
