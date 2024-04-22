@@ -46,6 +46,10 @@ trait FeedElement {
     }
 }
 
+trait ToAtom {
+    fn to_atom(&self) -> String;
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct Author {
     name: Option<String>,
@@ -53,7 +57,7 @@ struct Author {
     avatar: Option<String>,
 }
 
-impl Author {
+impl ToAtom for Author {
     fn to_atom(&self) -> String {
         let mut output = "<author>\n<name>".to_string();
         if let Some(name) = &self.name {
@@ -114,7 +118,7 @@ impl FeedElement for Item {
     }
 }
 
-impl Item {
+impl ToAtom for Item {
     fn to_atom(&self) -> String {
         let mut output = "".to_string();
 
@@ -240,20 +244,7 @@ impl FeedElement for Feed {
     }
 }
 
-impl Feed {
-    fn parse(data: &str) -> Result<Self, serde_json::Error> {
-        let mut feed = serde_json::from_str::<Feed>(data)?;
-        feed.cleanup_authors();
-
-        if let Some(ref mut items) = feed.items {
-            for item in items.iter_mut() {
-                item.cleanup_authors();
-            }
-        }
-
-        Ok(feed)
-    }
-
+impl ToAtom for Feed {
     fn to_atom(&self) -> String {
         let mut output = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n".to_string();
 
@@ -316,6 +307,21 @@ impl Feed {
 
         output += "</feed>";
         output
+    }
+}
+
+impl Feed {
+    fn parse(data: &str) -> Result<Self, serde_json::Error> {
+        let mut feed = serde_json::from_str::<Feed>(data)?;
+        feed.cleanup_authors();
+
+        if let Some(ref mut items) = feed.items {
+            for item in items.iter_mut() {
+                item.cleanup_authors();
+            }
+        }
+
+        Ok(feed)
     }
 }
 
