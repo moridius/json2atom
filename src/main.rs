@@ -32,7 +32,6 @@ fn get_mtime(file: &str) -> Option<OffsetDateTime> {
 }
 
 trait FeedElement {
-    fn updated(&self) -> Option<OffsetDateTime>;
     fn cleanup_authors(&mut self);
 
     fn cleanup_authors_impl(author: &mut Option<Author>, authors: &mut Option<Vec<Author>>) {
@@ -48,6 +47,10 @@ trait FeedElement {
 
 trait ToAtom {
     fn to_atom(&self) -> String;
+
+    fn updated(&self) -> Option<OffsetDateTime> {
+        None
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -101,6 +104,12 @@ struct Item {
 }
 
 impl FeedElement for Item {
+    fn cleanup_authors(&mut self) {
+        <Self as FeedElement>::cleanup_authors_impl(&mut self.author, &mut self.authors);
+    }
+}
+
+impl ToAtom for Item {
     fn updated(&self) -> Option<OffsetDateTime> {
         if let Some(date_modified) = &self.date_modified {
             return OffsetDateTime::parse(date_modified, &well_known::Rfc3339).ok();
@@ -113,12 +122,6 @@ impl FeedElement for Item {
         None
     }
 
-    fn cleanup_authors(&mut self) {
-        <Self as FeedElement>::cleanup_authors_impl(&mut self.author, &mut self.authors);
-    }
-}
-
-impl ToAtom for Item {
     fn to_atom(&self) -> String {
         let mut output = "".to_string();
 
@@ -219,6 +222,12 @@ struct Feed {
 }
 
 impl FeedElement for Feed {
+    fn cleanup_authors(&mut self) {
+        <Self as FeedElement>::cleanup_authors_impl(&mut self.author, &mut self.authors);
+    }
+}
+
+impl ToAtom for Feed {
     fn updated(&self) -> Option<OffsetDateTime> {
         let mut updated = None;
 
@@ -239,12 +248,6 @@ impl FeedElement for Feed {
         updated
     }
 
-    fn cleanup_authors(&mut self) {
-        <Self as FeedElement>::cleanup_authors_impl(&mut self.author, &mut self.authors);
-    }
-}
-
-impl ToAtom for Feed {
     fn to_atom(&self) -> String {
         let mut output = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n".to_string();
 
