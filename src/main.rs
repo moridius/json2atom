@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use jfeed::{Author, Feed, Item};
 use std::env;
 use std::fs;
 use std::fs::File;
@@ -31,33 +31,12 @@ fn get_mtime(file: &str) -> Option<OffsetDateTime> {
     None
 }
 
-trait FeedElement {
-    fn cleanup_authors(&mut self);
-
-    fn cleanup_authors_impl(author: &mut Option<Author>, authors: &mut Option<Vec<Author>>) {
-        if author.is_some() {
-            if authors.is_none() {
-                *authors = Some(vec![author.as_ref().unwrap().clone()]);
-            }
-
-            *author = None;
-        }
-    }
-}
-
 trait ToAtom {
     fn to_atom(&self) -> String;
 
     fn updated(&self) -> Option<OffsetDateTime> {
         None
     }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct Author {
-    name: Option<String>,
-    url: Option<String>,
-    avatar: Option<String>,
 }
 
 impl ToAtom for Author {
@@ -74,38 +53,6 @@ impl ToAtom for Author {
         output += "</author>\n";
 
         output
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Hub {
-    r#type: String,
-    url: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Item {
-    id: String,
-    url: Option<String>,
-    external_url: Option<String>,
-    title: Option<String>,
-    content_html: Option<String>,
-    content_text: Option<String>,
-    summary: Option<String>,
-    image: Option<String>,
-    banner_image: Option<String>,
-    date_published: Option<String>,
-    date_modified: Option<String>,
-    authors: Option<Vec<Author>>,
-    author: Option<Author>, // for compatibility with JSON Feed 1.0
-    tags: Option<Vec<String>>,
-    language: Option<String>,
-    attachments: Option<Vec<Attachment>>,
-}
-
-impl FeedElement for Item {
-    fn cleanup_authors(&mut self) {
-        <Self as FeedElement>::cleanup_authors_impl(&mut self.author, &mut self.authors);
     }
 }
 
@@ -193,40 +140,6 @@ impl ToAtom for Item {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Attachment {
-    url: String,
-    mime_type: String,
-    title: Option<String>,
-    size_in_bytes: Option<u64>,
-    duration_in_seconds: Option<u64>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Feed {
-    version: String,
-    title: String,
-    home_page_url: Option<String>,
-    feed_url: Option<String>,
-    description: Option<String>,
-    user_comment: Option<String>,
-    next_url: Option<String>,
-    icon: Option<String>,
-    favicon: Option<String>,
-    authors: Option<Vec<Author>>,
-    author: Option<Author>, // for compatibility with JSON Feed 1.0
-    language: Option<String>,
-    expired: Option<bool>,
-    hubs: Option<Vec<Hub>>, // TODO: Can this be used in output?
-    items: Option<Vec<Item>>,
-}
-
-impl FeedElement for Feed {
-    fn cleanup_authors(&mut self) {
-        <Self as FeedElement>::cleanup_authors_impl(&mut self.author, &mut self.authors);
-    }
-}
-
 impl ToAtom for Feed {
     fn updated(&self) -> Option<OffsetDateTime> {
         let mut updated = None;
@@ -310,21 +223,6 @@ impl ToAtom for Feed {
 
         output += "</feed>";
         output
-    }
-}
-
-impl Feed {
-    fn parse(data: &str) -> Result<Self, serde_json::Error> {
-        let mut feed = serde_json::from_str::<Feed>(data)?;
-        feed.cleanup_authors();
-
-        if let Some(ref mut items) = feed.items {
-            for item in items.iter_mut() {
-                item.cleanup_authors();
-            }
-        }
-
-        Ok(feed)
     }
 }
 
